@@ -2,12 +2,14 @@ import math
 import os
 import shutil
 import sys
+import time
 
 import cv2
 import geopy.distance
 # import pandas as pd
 import numpy as np
-from PIL import Image, ImageFont, ImageDraw
+
+# from PIL import Image, ImageFont, ImageDraw
 
 # +info
 # https://www.gpsworld.com/what-exactly-is-gps-nmea-data/
@@ -22,9 +24,10 @@ show_img = True
 img_size = [0] * 2
 distance_type = "hypotenuse"
 distance_operation = "avg"
-scale = 1
-max_dist = 200 * scale
-min_keypoints = 10
+scale = 0.1
+max_dist = 0
+
+min_keypoints = 0
 image_group = 10
 
 
@@ -160,7 +163,7 @@ def match_coordinates(p_lane_1, p_lane_2):
     # "lane_1_lon", "lane_2_src", "lane_2_prep", "lane_2_lat", "lane_2_lon", "dist"])
 
 
-def get_distance(p_good):
+def get_distance(p_good, kp1, kp2):
     for i, element in enumerate(p_good):
         p_good[i] = element[0]
 
@@ -208,97 +211,202 @@ def get_distance(p_good):
     return None
 
 
-if __name__ == "__main__":
-    lane_1, lane_2 = prepare_data(2)
+def img_filter(p_img, p_op=None):
+    gamma = math.log(0.5 * 255) / math.log(np.mean(p_img))
+    if p_op == "gamma":
+        p_img = np.power(p_img, gamma).clip(0, 255).astype(np.uint8)
 
-    lane_1 = append_coordinates(lane_1)
-    lane_2 = append_coordinates(lane_2)
+    elif p_op == "hist":
+        p_img = cv2.equalizeHist(p_img)
 
-    images = match_coordinates(lane_1, lane_2)
+    elif p_op == "hg":
+        p_img = np.power(cv2.equalizeHist(p_img), gamma).clip(0, 255).astype(np.uint8)
+
+    elif p_op == "gh":
+        p_img = cv2.equalizeHist(np.power(p_img, gamma).clip(0, 255).astype(np.uint8))
+
+    return p_img
+
+
+def match_images():
+    p_folder1 = "./res/input/prepared_lane_1"
+    p_folder2 = "./res/input/prepared_lane_2"
+
+    list_lane_1 = []
+    list_lane_2 = []
 
     image_dist = []
-    bad_matches = []
+    # bad_matches = []
 
-    for idx in range(0, len(images)):
+    for file in os.listdir("./out"):
+        if file.endswith(".jpg"):
+            os.remove("./out" + "/" + file)
 
-        bad_matches.append(idx)
+    for file in os.listdir(p_folder1):
+        if file.endswith(".jpg"):
+            list_lane_1.append(p_folder1 + "/" + file)
 
-        img_1 = cv2.imread(images[idx][1])
+    for file in os.listdir(p_folder2):
+        if file.endswith(".jpg"):
+            list_lane_2.append(p_folder2 + "/" + file)
 
-        if images[idx][5] is not None:
-            img_2 = cv2.imread(images[idx][5])
-        else:
-            continue
+    start_time = time.time()
+    count = 0
 
-        img1 = cv2.cvtColor(img_1, cv2.COLOR_BGR2GRAY)
-        img2 = cv2.cvtColor(img_2, cv2.COLOR_BGR2GRAY)
+    global img_size, max_dist, scale
 
-        if img_size[0] == 0:
-            img_size = img1.shape
-        img3 = None
+    img_1 = cv2.imread(list_lane_1[0])
 
-        try:
-            # Initiate SIFT creator
-            sift = cv2.SIFT_create()
+    width = int(img_1.shape[1] * scale)
+    height = int(img_1.shape[0] * scale)
 
-            # Find the keypoints and descriptors
-            kp1, des1 = sift.detectAndCompute(img1, None)
-            kp2, des2 = sift.detectAndCompute(img2, None)
+    img_size = (height, width)
+    ratio = img_1.shape[1] / img_1.shape[0]
 
-            # BFMatcher with default parameters
-            bf = cv2.BFMatcher()
-            matches = bf.knnMatch(des1, des2, k=2)
+    max_dist = 200000000 * math.sqrt(width ** 2 + height ** 2) / 2
 
-            # Apply radio test
-            good = []
-            for m, n in matches:
-                if m.distance < 0.5 * n.distance:
-                    good.append([m])
+    # init_j = 0
 
-            # Graph base
-            img3 = cv2.drawMatchesKnn(img1, kp1, img2, kp2, good, None,
-                                      flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-            img3 = cv2.rotate(img3, cv2.ROTATE_90_CLOCKWISE)
+    for i in range(10, len(list_lane_1)):
+        # print("-", len(list_lane_2) - init_j)
 
-            # Distances
-            matches = np.asarray(good)
-            if len(matches[:]) >= min_keypoints:
-                avg_distance = get_distance(good)
-                if avg_distance is not None:
-                    image_dist.append(int(np.average(avg_distance)))
+        print("\n-", len(list_lane_2))
 
+        for j in range(0, len(list_lane_2)):
+
+            try:
+                img_1 = cv2.imread(list_lane_1[i])
+                img_2 = cv2.imread(list_lane_2[j])
+
+            except Exception as e:
+                print(e)
+                input(".~-")
+                break
+
+            img1 = cv2.resize(img_1, (width, height), interpolation=cv2.INTER_AREA)
+            img2 = cv2.resize(img_2, (width, height), interpolation=cv2.INTER_AREA)
+
+            # cv2.imshow("", img_1)
+            # cv2.waitKey(0)
+
+            img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+            img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+
+            # img1 = img_filter(img1, "gamma")
+            # img2 = img_filter(img2, "gamma")
+
+            f1 = list_lane_1[i][-7:-4]
+            f2 = list_lane_2[j][-7:-4]
+
+            try:
+                # Initiate SIFT creator
+                sift = cv2.SIFT_create()
+
+                # Find the keypoints and descriptors
+                kp1, des1 = sift.detectAndCompute(img1, None)
+                kp2, des2 = sift.detectAndCompute(img2, None)
+
+                # BFMatcher with default parameters
+                bf = cv2.BFMatcher()
+                matches = bf.knnMatch(des1, des2, k=2)
+
+                # Apply radio test
+                good = []
+                for m, n in matches:
+                    if m.distance < 0.5 * n.distance:
+                        good.append([m])
+
+                # Graph base
+                img3 = cv2.drawMatchesKnn(img1, kp1, img2, kp2, good, None,
+                                          flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+
+                img3 = cv2.resize(img3, (int(300 * ratio), 150), interpolation=cv2.INTER_AREA)
+
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                font_color = (255, 255, 255)
+                thickness = 1
+                line_type = 2
+
+                count += 1
+                rate = count / (time.time() - start_time)
+
+                text = "%.2f %% | %.2f %% | %.2f samples/s" % (
+                    100 * (i + 1) / len(list_lane_1), 100 * (j + 1) / len(list_lane_2), rate)
+
+                cv2.putText(img3, text, (30, 30), font, font_scale, font_color, thickness, line_type)
+                cv2.putText(img3, "L1-%s | L2-%s" % (f1, f2), (30, 60), font, font_scale, font_color, thickness,
+                            line_type)
+                cv2.putText(img3, "Min. keypoints: %d" % min_keypoints, (int(150 * ratio) + 30, 60), font, font_scale,
+                            font_color, thickness, line_type)
+
+                # img3 = cv2.rotate(img3, cv2.ROTATE_90_CLOCKWISE)
+
+                # Distances
+                matches = np.asarray(good)
+                if len(matches[:]) >= min_keypoints:
+                    avg_distance = get_distance(good, kp1, kp2)
+
+                    text = "%.0f px LIM | %.0f px AVG" % (
+                        max_dist / scale, avg_distance / scale if avg_distance is not None else -1)
+
+                    cv2.putText(img3, text, (int(150 * ratio) + 30, 30), font, font_scale, font_color, thickness,
+                                line_type)
+
+                    cv2.imshow("", img3)
+                    cv2.waitKey(1)
+                    cv2.imwrite("./video/" + str(count).zfill(8) + ".jpg", img3)
+
+                    if avg_distance is not None:
+                        image_dist.append(
+                            [list_lane_1[i], list_lane_2[j], int(np.average(avg_distance)), len(matches[:])])
+
+                        sys.stdout.write(
+                            "\r(%.2f %% | %.2f %%) Coincidence: %d points [%s-%s]. Speed: %.2f samples/sec\n" %
+                            (100 * (i + 1) / len(list_lane_1), 100 * (j + 1) / len(list_lane_2),
+                             len(matches[:]), f1, f2, rate))
+
+                        cv2.imwrite("./out/" + f1 + "-" + f2 + ".jpg", img3)
+
+                        del list_lane_2[j]
+
+                        # init_j = j + 1
+
+                        break
+
+                    else:
+                        sys.stdout.write(
+                            "\r(%.2f %% | %.2f %%) Not enough points under max distance. Speed: %.2f samples/sec" % (
+                                100 * (i + 1) / len(list_lane_1), 100 * (j + 1) / len(list_lane_2), rate))
+                        continue
                 else:
-                    print("(%.2f %%) %s - %s - Not enough points under max distance" % (
-                        100 * (idx + 1) / len(images), idx, images[idx][1]))
+                    text = "%.0f px LIM | %.0f px AVG" % (max_dist / scale, -1)
+
+                    cv2.putText(img3, text, (int(150 * ratio) + 30, 30), font, font_scale, font_color, thickness,
+                                line_type)
+
+                    cv2.imshow("", img3)
+                    cv2.waitKey(1)
+
+                    sys.stdout.write("\r(%.2f %% | %.2f %%) Can’t find enough keypoints. Speed: %.2f samples/sec" % (
+                        100 * (i + 1) / len(list_lane_1), 100 * (j + 1) / len(list_lane_2), rate))
+
+                    cv2.imwrite("./video/" + str(count).zfill(8) + ".jpg", img3)
                     continue
-            else:
-                print(
-                    '(%.2f %%) %s - %s - Can’t find enough keypoints.' % (
-                    100 * (idx + 1) / len(images), images[idx][2], images[idx][5]))
+            except Exception as e:
+                # print(e)
                 continue
-        except Exception as e:
-            print(e)
-            continue
 
-        overlap = int(image_dist[-1] * scale)
+    for i in image_dist:
+        print(i)
 
-        # Distance
-        img = Image.fromarray(img3)
-        font = ImageFont.truetype("Roboto-Regular.ttf", int(img_size[0] / 12))
-        draw = ImageDraw.Draw(img)
-        draw.text((10, 10), "Mean distance (re): %d px" % image_dist[-1], (0, 255, 255), font=font)
-        if scale != 1:
-            draw.text((10, 100), "Mean distance (sc): %d px" % overlap, (0, 0, 0), font=font)
-        img.save("res/output/dist/%s_%s_%s.jpg" % (str(idx + 1).zfill(4), str(idx + 2).zfill(4), str(overlap)))
 
-        # Concatenation
-        img = np.concatenate((img_1, img_2[0:img_size[0], image_dist[-1]:img_size[1]]), axis=1)
-        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-        cv2.imwrite("res/output/join/%s_%s_%s.jpg" % (str(idx + 1).zfill(4), str(idx + 2).zfill(4), str(overlap)),
-                    img)
-
-        print("(%.2f %%) %s - %s - %d px - %d px" % (
-            100 * (idx + 1) / len(images), idx, idx + 1, overlap, np.average(image_dist) * scale))
-
-        # If the match is ok, remove the pair from the list
-        bad_matches.pop()
+if __name__ == "__main__":
+    # lane_1, lane_2 = prepare_data(2)
+    #
+    # lane_1 = append_coordinates(lane_1)
+    # lane_2 = append_coordinates(lane_2)
+    #
+    # images = match_coordinates(lane_1, lane_2)
+    #
+    match_images()
