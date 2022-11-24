@@ -2,15 +2,13 @@ import math
 import os
 import shutil
 import sys
-# import time
+from copy import deepcopy
 
 import cv2
 import geopy.distance
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-
-# from PIL import Image, ImageFont, ImageDraw
 
 # +info
 # https://www.gpsworld.com/what-exactly-is-gps-nmea-data/
@@ -122,6 +120,13 @@ def prepare_data(inverted: int = 0):
         sys.stdout.write("\r- Preparing lane 2 (%.2f %%)" % (100 * (p_idx + 1) / len(list_lane_2)))
 
     print("")
+
+    # Aplica reversión a las listas si las imágenes estaban ordenadas de forma inversa
+    if inverted in [1, 3]:
+        list_lane_1.reverse()
+
+    if inverted in [2, 3]:
+        list_lane_2.reverse()
 
     return list_lane_1, list_lane_2
 
@@ -288,18 +293,31 @@ def img_filter(p_img, p_op=None):
     return p_img
 
 
-def draw_knn(_p_i1, _p_i2, p_i3, p_f1, p_f2, p_avg_dist, p_match, ):
+def draw_knn(p_i1, p_i2, p_i3, p_f1, p_f2, p_dist, p_match, ):
+    """
+    Dibuja el resultado
+    :param p_i1: imagen de L1
+    :param p_i2: imagen de L2
+    :param p_i3: imágenes adyacentes con líneas de coincidencia Knn
+    :param p_f1: nombre de la imagen de L1
+    :param p_f2: nombre de la imagen de L2
+    :param p_dist: distancia calculada de solape
+    :param p_match:
+    :return:
+    """
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.5
     font_color = (255, 255, 255)
     thickness = 1
     line_type = 2
 
+    p_i3 = cv2.resize(p_i3, (int(ratio * 2 * 320), 320), interpolation=cv2.INTER_AREA)
+
     cv2.putText(p_i3, "L1-%s | L2-%s" % (p_f1, p_f2), (30, 60), font, font_scale, font_color, thickness,
                 line_type)
 
     text = "%.0f px LIM | %.0f px AVG" % (
-        (max_dist / scale), (p_avg_dist / scale) if p_avg_dist is not None else -1)
+        (max_dist / scale), (p_dist / scale) if p_dist is not None else -1)
 
     cv2.putText(p_i3, text, (int(150 * ratio) + 30, 30), font, font_scale, font_color, thickness,
                 line_type)
@@ -307,9 +325,16 @@ def draw_knn(_p_i1, _p_i2, p_i3, p_f1, p_f2, p_avg_dist, p_match, ):
     cv2.putText(p_i3, "Min. kp: %d | Keypoints: %d" % (min_keypoints, p_match),
                 (int(150 * ratio) + 30, 60), font, font_scale, font_color, thickness, line_type)
 
-    cv2.imwrite("./out/" + p_f1 + "-" + p_f2 + "_" + str(int(p_avg_dist / scale)) + ".jpg", p_i3)
+    cv2.imwrite("./out/" + p_f1 + "-" + p_f2 + "_" + str(int(p_dist / scale)) + ".jpg", p_i3)
 
-    # cropped_image = np.concatenate((p_i1[0:-int(p_avg_dist / scale), :], p_i2), axis=1)
+    p_i1 = p_i1[0:img_size[0], 0:img_size[1] - int(p_dist)]  # height, width
+    p_i4 = np.concatenate((p_i1, p_i2), axis=1)
+
+    r_i4 = np.shape(p_i4)[1] / np.shape(p_i4)[0]
+
+    p_i4 = cv2.resize(p_i4, (int(r_i4 * 320), 320), interpolation=cv2.INTER_AREA)
+
+    cv2.imwrite("./video/" + p_f1 + "-" + p_f2 + "_" + str(int(p_dist / scale)) + ".jpg", p_i4)
 
 
 def sift_function(p_lane_1, p_lane_2):
@@ -326,11 +351,11 @@ def sift_function(p_lane_1, p_lane_2):
         img_1 = cv2.imread(p_lane_1)
         img_2 = cv2.imread(p_lane_2)
 
-        img1 = cv2.resize(img_1, (img_size[1], img_size[0]), interpolation=cv2.INTER_AREA)
-        img2 = cv2.resize(img_2, (img_size[1], img_size[0]), interpolation=cv2.INTER_AREA)
+        img_1 = cv2.resize(img_1, (img_size[1], img_size[0]), interpolation=cv2.INTER_AREA)
+        img_2 = cv2.resize(img_2, (img_size[1], img_size[0]), interpolation=cv2.INTER_AREA)
 
-        img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
-        img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+        img1 = cv2.cvtColor(img_1, cv2.COLOR_BGR2GRAY)
+        img2 = cv2.cvtColor(img_2, cv2.COLOR_BGR2GRAY)
 
         f1 = p_lane_1[-7:-4]
         f2 = p_lane_2[-7:-4]
@@ -353,12 +378,10 @@ def sift_function(p_lane_1, p_lane_2):
                 good.append([m])
 
         # Graph base
-        img3 = cv2.drawMatchesKnn(img1, kp1, img2, kp2, good, None,
+        img3 = cv2.drawMatchesKnn(img_1, kp1, img_2, kp2, good, None,
                                   flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
 
-        img3 = cv2.resize(img3, (int(ratio * 2 * 80), 80), interpolation=cv2.INTER_AREA)
-
-        cv2.imshow("", img3)
+        cv2.imshow("", cv2.resize(img3, (int(ratio * 2 * 160), 160), interpolation=cv2.INTER_AREA))
         cv2.waitKey(1)
 
         # Distances
@@ -378,66 +401,85 @@ def sift_function(p_lane_1, p_lane_2):
         return avg_dist
 
 
-def match_images():
-    p_folder1 = "./res/input/prepared_lane_1"
-    p_folder2 = "./res/input/prepared_lane_2"
+def match_images(p_lane_1, p_lane_2):
+    # p_folder1 = "./res/input/prepared_lane_1"
+    # p_folder2 = "./res/input/prepared_lane_2"
 
-    list_lane_1 = []
-    list_lane_2 = []
+    # ----------------------------------------------------------------------
+
+    global img_size, max_dist, scale, ratio
+
+    img_1 = cv2.imread(p_lane_1[0][1])
+    width, height = int(img_1.shape[1] * scale), int(img_1.shape[0] * scale)
+    img_size = (height, width)
+    ratio = img_size[1] / img_size[0]
+    max_dist = math.sqrt(width ** 2 + height ** 2) / 2
+
+    # ----------------------------------------------------------------------
 
     image_dist = []
-    # bad_matches = []
+    bad_matches = []
 
     for file in os.listdir("./out"):
         if file.endswith(".jpg"):
             os.remove("./out" + "/" + file)
 
-    for file in os.listdir(p_folder1):
+    for file in os.listdir("./video"):
         if file.endswith(".jpg"):
-            list_lane_1.append(p_folder1 + "/" + file)
+            os.remove("./video" + "/" + file)
 
-    for file in os.listdir(p_folder2):
-        if file.endswith(".jpg"):
-            list_lane_2.append(p_folder2 + "/" + file)
-
-    # start_time = time.time()
-    # count = 0
-
-    global img_size, max_dist, scale, ratio
-
-    img_1 = cv2.imread(list_lane_1[0])
-    width, height = int(img_1.shape[1] * scale), int(img_1.shape[0] * scale)
-    img_size = (height, width)
-    ratio = img_size[1] / img_size[0]
-
-    max_dist = math.sqrt(width ** 2 + height ** 2) / 2
+    p_list_1 = deepcopy(p_lane_1)
+    p_list_2 = deepcopy(p_lane_2)
 
     last_j = 0
 
-    for i in range(0, len(list_lane_1)):
+    for i in range(0, len(p_list_1)):
 
-        avg_dist = sift_function(list_lane_1[i], list_lane_2[last_j])
+        # Calculamos la distancia para la j consecutiva (si no, empieza en 0)
+        avg_dist = sift_function(p_list_1[i][1], p_list_2[last_j][1])
 
-        sys.stdout.write("\r- %.2f | - %d" % (100 * (i + 1) / len(list_lane_1), last_j))
+        sys.stdout.write("\r- %s (%.2f %%) | %s" % (
+            p_list_1[i][0].split("_")[4], 100 * (i + 1) / len(p_list_1), p_list_2[last_j][0].split("_")[4]))
 
+        # Si no detecta coincidencia, recorre toda la lista siempre que las coordenadas sean cercanas
         if avg_dist is None:
-            for j in range(0, len(list_lane_2)):
-                avg_dist = sift_function(list_lane_1[i], list_lane_2[j])
+            for j in range(0, len(p_list_2)):
 
-                sys.stdout.write("\r- %.2f | %.2f" % (100 * (i + 1) / len(list_lane_1),
-                                                      100 * (j + 1) / len(list_lane_2)))
+                # Comprobamos que la distancia entre coordenadas no sea excesiva
+                j_distance = geopy.distance.geodesic(p_list_1[i][2:4], p_list_2[j][2:4]).m
+                if j_distance > max_distance * 4:
+                    continue
 
+                # Calculamos la distancia para el elemento j
+                avg_dist = sift_function(p_list_1[i][1], p_list_2[j][1])
+
+                sys.stdout.write("\r- %s (%.2f %%) | %s (%.2f %%)" % (
+                    p_list_1[i][0].split("_")[4], 100 * (i + 1) / len(p_list_1),
+                    p_list_2[j][0].split("_")[4], 100 * (j + 1) / len(p_list_2)))
+
+                # Si la distancia no es nula, sale del bucle
                 if avg_dist is not None:
                     last_j = j
                     break
 
+        # Si la distancia no es nula, añade la distancia a la lista y elimina el elemento j utilizado
         if avg_dist is not None:
+            p_lane_1[i].append(p_lane_1[i][0].replace("param2", str(int(avg_dist))))
             image_dist.append(avg_dist)
-            del list_lane_2[last_j]
+            del p_list_2[last_j]
             continue
 
-    for k in image_dist:
-        print(k)
+        # Si sigue siendo nulo, pone la imagen en la lista mala
+        if avg_dist is None:
+            bad_matches.append(i)
+
+    avg_dist = int(sum(image_dist) / len(image_dist))
+
+    for i in bad_matches:
+        p_lane_1[i].append(p_lane_1[i][0].replace("param2", str(int(avg_dist))))
+
+    for lane in p_lane_1:
+        print(lane[-1])
 
 
 if __name__ == "__main__":
@@ -446,12 +488,14 @@ if __name__ == "__main__":
     lane_1 = append_coordinates(lane_1)
     lane_2 = append_coordinates(lane_2)
 
+    match_images(lane_1, lane_2)
+
     images = match_coordinates(lane_1, lane_2)
 
     df_img = pd.DataFrame(images, columns=["lane_1_src", "lane_1_prep", "lane_1_lat", "lane_1_lon",
                                            "lane_2_src", "lane_2_prep", "lane_2_lat", "lane_2_lon", "dist"])
 
-    # df_img.to_csv("./geomatch.csv", sep=";", decimal=",", index=False)
+    df_img.to_csv("./geomatch.csv", sep=";", decimal=",", index=False)
 
     fig = plt.figure()
 
@@ -470,5 +514,3 @@ if __name__ == "__main__":
 
     plt.axis("equal")
     fig.savefig('./geomatch.svg')
-
-    match_images()
