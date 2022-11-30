@@ -2,11 +2,15 @@ import math
 import os
 import shutil
 import sys
-from copy import deepcopy
+import traceback
+# import traceback
+from datetime import datetime
+
+# from copy import deepcopy
 
 import cv2
 import geopy.distance
-# import pandas as pd
+import pandas as pd
 import numpy as np
 
 # import matplotlib.pyplot as plt
@@ -18,14 +22,14 @@ import numpy as np
 
 # Distancia máxima en metros: diagonal de la imagen
 # 0.2098: relación cm/px calculada para imágenes corregidas de cámara 0
-max_distance = 1.5 * 0.2098 * math.sqrt(2448 ** 2 + 968 ** 2) / 100
+max_distance = 0.2098 * math.sqrt(2448 ** 2 + 968 ** 2) / 100  # en metros
 
 show_img = True
 img_size = [0] * 2
 ratio = 1
 distance_type = "leg"
 distance_operation = "avg"
-scale = 0.5
+scale = 1
 max_dist = 0
 
 min_keypoints = 5
@@ -51,15 +55,17 @@ def fix_lane_coord(p_lane: list) -> list:
     return p_lane
 
 
-def prepare_data(inverted: int = 0):
+def prepare_data(p_folder_l1, p_folder_l2, p_reverse=0):
     """
     Prepara la información a partir de dos carpetas de entrada (L1 y L2)
 
-    :param inverted: 0 (no lane reversed), 1 (lane 1), 2 (lane 2), 3 (both lanes)
+    :param p_folder_l2:
+    :param p_folder_l1:
+    :param p_reverse: 0 (no lane reversed), 1 (lane 1), 2 (lane 2), 3 (both lanes)
     :return:
     """
-    path_lane_1, path_prepared_1 = "./res/input/lane_1", "./res/input/prepared_lane_1"
-    path_lane_2, path_prepared_2 = "./res/input/lane_2", "./res/input/prepared_lane_2"
+    path_prepared_1 = "./res/input/prepared_lane_1"
+    path_prepared_2 = "./res/input/prepared_lane_2"
 
     list_lane_1 = []
     list_lane_2 = []
@@ -72,15 +78,15 @@ def prepare_data(inverted: int = 0):
         os.remove(path_prepared_2 + "/" + file) if file.endswith(".jpg") else 0
 
     # Agrupa los ficheros de imagen de cada carpeta
-    for file in os.listdir(path_lane_1):
+    for file in os.listdir(p_folder_l1):
         if file.endswith(".jpg"):
             # file = file.split("_")[4]
-            list_lane_1.append(path_lane_1 + "/" + file)
+            list_lane_1.append(p_folder_l1 + "/" + file)
 
-    for file in os.listdir(path_lane_2):
+    for file in os.listdir(p_folder_l2):
         if file.endswith(".jpg"):
             # file = file.split("_")[4]
-            list_lane_2.append(path_lane_2 + "/" + file)
+            list_lane_2.append(p_folder_l2 + "/" + file)
 
     # Número máximo de caracteres en texto
     chr_max = len(str(max([len(list_lane_1), len(list_lane_2)])))
@@ -88,12 +94,12 @@ def prepare_data(inverted: int = 0):
     # Carril 1
     for p_idx, element in enumerate(list_lane_1):
         # Asigna un nombre numérico a la imagen, e invierte el orden si el carril está invertido
-        temp_name = str(len(list_lane_1) - p_idx - 1).zfill(chr_max) if inverted in [1, 3] else str(p_idx).zfill(
+        temp_name = str(len(list_lane_1) - p_idx - 1).zfill(chr_max) if p_reverse in [1, 3] else str(p_idx).zfill(
             chr_max)
         list_lane_1[p_idx] = [element, path_prepared_1 + "/" + temp_name + ".jpg"]
 
         # Copia la imagen y la gira si está invertida
-        if inverted in [1, 3]:
+        if p_reverse in [1, 3]:
             cv2.imwrite(list_lane_1[p_idx][1], cv2.rotate(cv2.imread(list_lane_1[p_idx][0]), cv2.ROTATE_180))
         else:
             shutil.copy(list_lane_1[p_idx][0], list_lane_1[p_idx][1])
@@ -105,12 +111,12 @@ def prepare_data(inverted: int = 0):
     # Carril 2
     for p_idx, element in enumerate(list_lane_2):
         # Asigna un nombre numérico a la imagen, e invierte el orden si el carril está invertido
-        temp_name = str(len(list_lane_2) - p_idx - 1).zfill(chr_max) if inverted in [2, 3] else str(p_idx).zfill(
+        temp_name = str(len(list_lane_2) - p_idx - 1).zfill(chr_max) if p_reverse in [2, 3] else str(p_idx).zfill(
             chr_max)
         list_lane_2[p_idx] = [element, path_prepared_2 + "/" + temp_name + ".jpg"]
 
         # Copia la imagen y la gira si está invertida
-        if inverted in [2, 3]:
+        if p_reverse in [2, 3]:
             cv2.imwrite(list_lane_2[p_idx][1], cv2.rotate(cv2.imread(list_lane_2[p_idx][0]), cv2.ROTATE_180))
         else:
             shutil.copy(list_lane_2[p_idx][0], list_lane_2[p_idx][1])
@@ -120,10 +126,10 @@ def prepare_data(inverted: int = 0):
     print("")
 
     # Aplica reversión a las listas si las imágenes estaban ordenadas de forma inversa
-    if inverted in [1, 3]:
+    if p_reverse in [1, 3]:
         list_lane_1.reverse()
 
-    if inverted in [2, 3]:
+    if p_reverse in [2, 3]:
         list_lane_2.reverse()
 
     list_lane_1 = append_coordinates(list_lane_1)
@@ -226,6 +232,15 @@ def match_coordinates(p_lane_1: list, p_lane_2: list) -> list:
 
 
 def get_distance(p_good, p_kp1, p_kp2, p_max, p_type):
+    """
+
+    :param p_good:
+    :param p_kp1:
+    :param p_kp2:
+    :param p_max:
+    :param p_type:
+    :return:
+    """
     for k, element in enumerate(p_good):
         p_good[k] = element[0]
 
@@ -296,11 +311,55 @@ def img_filter(p_img, p_op=None):
     return p_img
 
 
-def draw_knn(p_i1, p_i2, p_i3, p_f1, p_f2, p_dist, p_match, ):
+def draw_overlap_transversal(p_row, p_idx="0"):
     """
-    Dibuja el resultado
-    :param p_i1: imagen de L1
-    :param p_i2: imagen de L2
+    Dibuja el solape entre carriles
+    :param p_row:
+    :param p_idx:
+    :return:
+    """
+
+    p_match = p_row["MATCH"]
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.5
+    font_color = (255, 255, 255)
+    thickness = 1
+    line_type = 2
+
+    p_i1 = cv2.imread(p_row["1_P"])
+
+    if p_row["2_P"] == "":
+        p_i2 = np.zeros((img_size[0], img_size[1], 3), np.uint8)
+    else:
+        p_i2 = cv2.imread(p_row["2_P"])
+
+    p_i1 = p_i1[0:p_i1.shape[0], 0:p_i1.shape[1] - int(p_row["DIST"])]  # height, width
+
+    p_i4 = np.concatenate((p_i1, p_i2), axis=1)
+
+    r_i4 = np.shape(p_i4)[1] / np.shape(p_i4)[0]
+    p_i4 = cv2.resize(p_i4, (int(r_i4 * 640), 640), interpolation=cv2.INTER_AREA)
+
+    text_1 = "Imagen carril 1: %s" % p_row["1_S"].split("/")[-1]
+    text_2 = "Imagen carril 2: %s" % p_row["2_S"].split("/")[-1] if p_row["2_S"] != "" else "Imagen carril 2: -"
+    text_3 = "Distancia media: %d px" % p_row["DIST"]
+
+    cv2.putText(p_i4, text_1, (50, 150), font, font_scale, font_color, thickness, line_type)
+    cv2.putText(p_i4, text_2, (50, 200), font, font_scale, font_color, thickness, line_type)
+    cv2.putText(p_i4, text_3, (50, 250), font, font_scale, font_color, thickness, line_type)
+
+    if p_match == "MATCHED":
+        cv2.circle(p_i4, (50, 50), 25, (0, 255, 0), -1)
+    else:
+        cv2.circle(p_i4, (50, 50), 25, (0, 0, 255), -1)
+
+    cv2.imwrite("./res/output/video/img" + p_idx + ".jpg", p_i4)
+
+
+def draw_knn(p_f1, p_f2, p_i3, p_dist, p_match):
+    """
+    Dibuja el resultado del método SIFT (Knn)
     :param p_i3: imágenes adyacentes con líneas de coincidencia Knn
     :param p_f1: nombre de la imagen de L1
     :param p_f2: nombre de la imagen de L2
@@ -328,17 +387,7 @@ def draw_knn(p_i1, p_i2, p_i3, p_f1, p_f2, p_dist, p_match, ):
     cv2.putText(p_i3, "Min. kp: %d | Keypoints: %d" % (min_keypoints, p_match),
                 (int(150 * ratio) + 30, 60), font, font_scale, font_color, thickness, line_type)
 
-    cv2.imwrite("./out/" + p_f1 + "-" + p_f2 + "_" + str(int(p_dist / scale)) + ".jpg", p_i3)
-
-    p_i1 = p_i1[0:img_size[0], 0:img_size[1] - int(p_dist)]  # height, width
-    p_i4 = np.concatenate((p_i1, p_i2), axis=1)
-
-    r_i4 = np.shape(p_i4)[1] / np.shape(p_i4)[0]
-
-    p_i4 = cv2.resize(p_i4, (int(r_i4 * 320), 320), interpolation=cv2.INTER_AREA)
-
-    # TODO: señalar imágenes que no hayan hecho match (¿rellenar con negro?)
-    cv2.imwrite("./video/" + p_f1 + "-" + p_f2 + "_" + str(int(p_dist / scale)) + ".jpg", p_i4)
+    cv2.imwrite("./res/output/match/" + p_f1 + "-" + p_f2 + "_" + str(int(p_dist / scale)) + ".jpg", p_i3)
 
 
 def sift_function(p_lane_1, p_lane_2):
@@ -349,6 +398,7 @@ def sift_function(p_lane_1, p_lane_2):
     :return: 
     """
 
+    global max_dist
     avg_dist = None
 
     try:
@@ -361,8 +411,8 @@ def sift_function(p_lane_1, p_lane_2):
         img1 = cv2.cvtColor(img_1, cv2.COLOR_BGR2GRAY)
         img2 = cv2.cvtColor(img_2, cv2.COLOR_BGR2GRAY)
 
-        f1 = p_lane_1[-7:-4]
-        f2 = p_lane_2[-7:-4]
+        f1 = p_lane_1[p_lane_1.rfind("/") + 1:-4]
+        f2 = p_lane_2[p_lane_2.rfind("/") + 1:-4]
 
         # Initiate SIFT creator
         sift = cv2.SIFT_create()
@@ -391,17 +441,18 @@ def sift_function(p_lane_1, p_lane_2):
         # Distances
         matches = np.asarray(good)
         if len(matches[:]) >= min_keypoints:
-            avg_distance = get_distance(good, kp1, kp2)
+
+            avg_distance = get_distance(good, kp1, kp2, p_max=max_dist, p_type="leg_x")
 
             if avg_distance is not None:
                 avg_dist = int(np.average(avg_distance))
 
-                draw_knn(img_1, img_2, img3, f1, f2, avg_distance, len(matches[:]))
+                draw_knn(f1, f2, img3, avg_distance, len(matches[:]))
 
         return avg_dist
 
-    except Exception as e:
-        print(e)
+    except Exception:
+        print(traceback.format_exc())
         return avg_dist
 
 
@@ -418,74 +469,123 @@ def match_images(p_lane_1, p_lane_2):
 
     # ----------------------------------------------------------------------
 
-    image_dist = []
+    # image_dist = []
     bad_matches = []
 
-    for file in os.listdir("./out"):
+    for file in os.listdir("./res/output/match"):
         if file.endswith(".jpg"):
-            os.remove("./out" + "/" + file)
+            os.remove("./res/output/match/" + file)
 
-    for file in os.listdir("./video"):
+    for file in os.listdir("./res/output/video"):
         if file.endswith(".jpg"):
-            os.remove("./video" + "/" + file)
+            os.remove("./res/output/video/" + file)
 
-    p_list_1 = deepcopy(p_lane_1)
-    p_list_2 = deepcopy(p_lane_2)
+    # p_lane_1 = deepcopy(p_lane_1)
+    # p_list_2 = deepcopy(p_lane_2)
+
+    match_list = []
 
     last_j = 0
 
-    for i in range(0, len(p_list_1)):
+    for i in range(0, len(p_lane_1)):
 
-        # Calculamos la distancia para la j consecutiva (si no, empieza en 0)
-        avg_dist = sift_function(p_list_1[i][1], p_list_2[last_j][1])
+        avg_dist = None
 
-        sys.stdout.write("\r- %s (%.2f %%) | %s" % (
-            p_list_1[i][0].split("_")[4], 100 * (i + 1) / len(p_list_1), p_list_2[last_j][0].split("_")[4]))
+        for j in range(0, len(p_lane_2)):
 
-        # Si no detecta coincidencia, recorre toda la lista siempre que las coordenadas sean cercanas
-        if avg_dist is None:
-            for j in range(0, len(p_list_2)):
+            # Comprobamos que la distancia entre coordenadas no sea excesiva
+            j_distance = geopy.distance.geodesic(p_lane_1[i][2:4], p_lane_2[j][2:4]).m
+            if j_distance > max_distance:
+                continue
 
-                # Comprobamos que la distancia entre coordenadas no sea excesiva
-                j_distance = geopy.distance.geodesic(p_list_1[i][2:4], p_list_2[j][2:4]).m
-                if j_distance > max_distance * 4:
-                    continue
+            # Calculamos la distancia para el elemento j
+            avg_dist = sift_function(p_lane_1[i][1], p_lane_2[j][1])
 
-                # Calculamos la distancia para el elemento j
-                avg_dist = sift_function(p_list_1[i][1], p_list_2[j][1])
+            sys.stdout.write("\r- %s (%.2f %%) | %s (%.2f %%)" % (
+                p_lane_1[i][0].split("_")[5], 100 * (i + 1) / len(p_lane_1),
+                p_lane_2[j][0].split("_")[5], 100 * (j + 1) / len(p_lane_2)))
 
-                sys.stdout.write("\r- %s (%.2f %%) | %s (%.2f %%)" % (
-                    p_list_1[i][0].split("_")[4], 100 * (i + 1) / len(p_list_1),
-                    p_list_2[j][0].split("_")[4], 100 * (j + 1) / len(p_list_2)))
+            # Si la distancia no es nula, sale del bucle
+            if avg_dist is not None:
+                last_j = j
+                break
 
-                # Si la distancia no es nula, sale del bucle
-                if avg_dist is not None:
-                    last_j = j
-                    break
-
-        # Si la distancia no es nula, añade la distancia a la lista y elimina el elemento j utilizado
-        # TODO: estudiar de qué forma operamos con la lista de no coincidentes
+        # Si la distancia no es nula, añade la distancia a la lista y elimina el elemento j-1 utilizado (si j > 0).
+        # Esto nos permite volver a utilizar j si no encontramos coincidencia con la imagen siguiente
         if avg_dist is not None:
-            p_lane_1[i].append(p_lane_1[i][0].replace("param2", str(int(avg_dist))))
-            image_dist.append(avg_dist)
-            del p_list_2[last_j]
+            match_list.append(p_lane_1[i])
+            match_list[-1].extend(p_lane_2[last_j])
+            match_list[-1].append(avg_dist)
+            match_list[-1].append("MATCHED")
             continue
 
         # Si sigue siendo nulo, pone la imagen en la lista mala
         if avg_dist is None:
             bad_matches.append(i)
 
-    avg_dist = int(sum(image_dist) / len(image_dist))
-
+    # La lista mala se rellena con valores vacíos para L2 y distancia nula
     for i in bad_matches:
-        p_lane_1[i].append(p_lane_1[i][0].replace("param2", str(int(avg_dist))))
+        match_list.append(p_lane_1[i])
+        match_list[-1].extend([""] * len(p_lane_2[last_j]))
+        match_list[-1].append(None)
+        match_list[-1].append("DEDUCTED")
 
-    for lane in p_lane_1:
-        print(lane[-1])
+    match_list.sort(key=lambda x: x[1])
+
+    # Serie ascendente de match_list: acoplar imágenes de L2 consecutivas
+    for i in range(1, len(match_list)):
+        if match_list[i][4] == "" and match_list[i - 1][4] != "":
+
+            x1 = match_list[i - 1][5].rfind("/") + 1
+            x2 = match_list[i - 1][5].rfind(".")
+
+            j = int(match_list[i - 1][5][int(x1): int(x2)])
+            j = "./res/input/prepared_lane_2/" + str(j + 1) + ".jpg"
+
+            if not os.path.isfile(j):
+                print("no existe el fichero...")
+                continue
+
+            for k in range(0, len(p_lane_2)):
+                if j in p_lane_2[k][1]:
+                    match_list[i][4:8] = p_lane_2[k]
+                    break
+
+    # Serie descendente de match_list: acoplar imágenes de L2 consecutivas
+    for i in range(len(match_list) - 1, -1, -1):
+        if match_list[i][4] == "" and match_list[i + 1][4] != "":
+
+            x1 = match_list[i + 1][5].rfind("/") + 1
+            x2 = match_list[i + 1][5].rfind(".")
+
+            j = int(match_list[i + 1][5][int(x1): int(x2)])
+            j = "./res/input/prepared_lane_2/" + str(j - 1) + ".jpg"
+
+            if not os.path.isfile(j):
+                print("no existe el fichero...")
+                continue
+
+            for k in range(0, len(p_lane_2)):
+                if j in p_lane_2[k][1]:
+                    match_list[i][4:8] = p_lane_2[k]
+                    break
+
+    df = pd.DataFrame(match_list, columns=["1_S", "1_P", "1_LO", "1_LA", "2_S", "2_P", "2_LO", "2_LA", "DIST", "MATCH"])
+
+    # Interpolación (para elemento de la lista mala)
+    df = df.interpolate()  # interpolación lineal hacia adelante
+    df = df.interpolate(limit=100, limit_direction="backward")  # interpolación lineal hacia atrás
+
+    df.to_csv("./res/output/data/match_" + datetime.now().strftime("%d-%m-%Y_%H-%M-%S") + ".csv", sep=";", decimal=",",
+              index=False)
+
+    for index, row in df.iterrows():
+        draw_overlap_transversal(row, str(index).zfill(len(str(len(df) - 1))))
 
 
-def overlap_transversal():
-    pass
+def overlap_transversal(p_folder_l1, p_folder_l2, p_reverse):
+    lane_1, lane_2 = prepare_data(p_folder_l1, p_folder_l2, p_reverse)
+    match_images(lane_1, lane_2)
 
 
 def overlap_longitudinal(p_folder_l1: str):
@@ -623,11 +723,12 @@ def overlap_longitudinal(p_folder_l1: str):
 
 
 def overlap(folder_l1: str = "", folder_l2: str = ""):
-    overlap_longitudinal(folder_l1)
+    # overlap_longitudinal(folder_l1)
+    overlap_transversal(folder_l1, folder_l2, 2)
 
 
 if __name__ == "__main__":
-    overlap("./res/input/lane", "./res/input/lane_2")
+    overlap("./res/input/lane_1", "./res/input/lane_2")
     # lane_1, lane_2 = prepare_data(2)
     #
     # overlap_transversal()
@@ -641,7 +742,7 @@ if __name__ == "__main__":
     # df_img = pd.DataFrame(images, columns=["lane_1_src", "lane_1_prep", "lane_1_lat", "lane_1_lon",
     #                                        "lane_2_src", "lane_2_prep", "lane_2_lat", "lane_2_lon", "dist"])
     #
-    # df_img.to_csv("./geomatch.csv", sep=";", decimal=",", index=False)
+    # df_img.to_csv("./res/output/data/geomatch.csv", sep=";", decimal=",", index=False)
     #
     # fig = plt.figure()
     #
@@ -659,4 +760,4 @@ if __name__ == "__main__":
     # plt.ylim([np.min(y_list), np.max(y_list)])
     #
     # plt.axis("equal")
-    # fig.savefig('./geomatch.svg')
+    # fig.savefig('./res/output/data/geomatch.svg')
