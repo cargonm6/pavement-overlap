@@ -8,6 +8,11 @@ def create_video(p_file: str = "out.avi", p_rate: int = 12):
     Crea un vídeo con FFMPEG a partir de un conjunto de imágenes
     :return:
     """
+
+    if not os.path.isfile("./ffmpeg.exe"):
+        print("No se encontró el archivo \"./ffmpeg.exe\"")
+        return
+
     try:
         dir_path = os.path.dirname(os.path.realpath(__file__))
         os.chdir(dir_path)
