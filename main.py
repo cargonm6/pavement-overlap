@@ -334,7 +334,9 @@ def draw_overlap_transversal(p_row, p_idx="0"):
     else:
         p_i2 = cv2.imread(p_row["2_P"])
 
-    p_i1 = p_i1[0:p_i1.shape[0], 0:p_i1.shape[1] - int(p_row["DIST"])]  # height, width
+    p_i1 = p_i1[0:p_i1.shape[0], 0:p_i1.shape[1] - int(p_row["DIST"] / 2)]  # height, width
+
+    p_i2 = p_i2[0:p_i2.shape[0], 0 + int(p_row["DIST"] / 2):p_i2.shape[1]]  # height, width
 
     p_i4 = np.concatenate((p_i1, p_i2), axis=1)
 
