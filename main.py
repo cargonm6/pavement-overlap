@@ -12,6 +12,7 @@ import cv2
 import geopy.distance
 import pandas as pd
 import numpy as np
+from PIL import Image
 
 # import matplotlib.pyplot as plt
 
@@ -725,12 +726,87 @@ def overlap_longitudinal(p_folder_l1: str):
 
 
 def overlap(folder_l1: str = "", folder_l2: str = ""):
-    # overlap_longitudinal(folder_l1)
-    overlap_transversal(folder_l1, folder_l2, 2)
+    overlap_longitudinal(folder_l1)
+    # overlap_transversal(folder_l1, folder_l2, 2)
+
+
+def perspective(p_folder):
+    """
+    Produce conjuntos de imágenes en perspectiva
+    :param p_folder: carpeta de imágenes de entrada
+    :return:
+    """
+
+    # https://medium.com/analytics-vidhya/perspective-transformation-in-python-on-live-video-bca558876e8
+    # http://www.paver.colostate.edu/ImageInspector.php
+
+    p_box_w = 600
+    p_box_h = 300
+    p_box_r = 0.1
+    p_box_e = 100
+    p_img_w = 2448
+    p_img_h = 968
+
+    p_img_group = 20
+
+    ls_image = []
+
+    # Lista todos los ficheros JPEG de la carpeta
+    for file in os.listdir(p_folder):
+        if file.endswith(".jpg"):
+            ls_image.append(p_folder + "/" + file)
+
+    for i in range(0, len(ls_image)):
+
+        if (i + p_img_group) >= len(ls_image):
+            break
+
+        rang = list(range(i, i + p_img_group))
+
+        image = None
+
+        for k in rang:
+            # https://stackoverflow.com/questions/69193338/reading-images-with-cv2-is-too-slow
+            image_i = np.asarray(Image.open(ls_image[k]))
+            # image_i = cv2.imread(ls_image[k])
+            image = image_i if image is None else np.concatenate((image, image_i), axis=0)
+
+        image = cv2.resize(image, (int(2448 / 6), int(968 * len(rang) / 6)), interpolation=cv2.INTER_AREA)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        image = img_filter(image, "gamma")
+
+        img_pts = np.float32([[0, 0],  # NW
+                              [0, int(p_img_h * len(rang) / 6)],  # SW
+                              [int(p_img_w / 6), 0],  # NE
+                              [int(p_img_w / 6), int(p_img_h * len(rang) / 6)]])  # SE
+
+        obj_pts = np.float32([[int(p_box_w / 2) - int(p_box_w * p_box_r / 2), p_box_e],  # NW
+                              [0, p_box_h],  # SW
+                              [int(p_box_w / 2) + int(p_box_w * p_box_r / 2), p_box_e],  # NE
+                              [p_box_w, p_box_h]])  # SE
+
+        matrix = cv2.getPerspectiveTransform(img_pts, obj_pts)
+        image = cv2.warpPerspective(image, matrix, (p_box_w, p_box_h))
+
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+
+        pts = np.array([[0, p_box_e], [int(p_box_w / 2) - int(p_box_w * p_box_r / 2), p_box_e],
+                        [0, p_box_h]], np.int32).reshape((-1, 1, 2))
+        image = cv2.fillPoly(image, [pts], (50, 50, 50))
+
+        pts = np.array([[p_box_w, p_box_e], [int(p_box_w / 2) + int(p_box_w * p_box_r / 2), p_box_e],
+                        [p_box_w, p_box_h]], np.int32).reshape((-1, 1, 2))
+        image = cv2.fillPoly(image, [pts], (50, 50, 50))
+
+        pts = np.array([[0, 0], [p_box_w, 0], [p_box_w, p_box_e], [0, p_box_e]], np.int32).reshape((-1, 1, 2))
+        image = cv2.fillPoly(image, [pts], (100, 100, 50))
+
+        cv2.imwrite("./res/output/video_perspective/img" + str(i).zfill(3) + ".jpg", image)
 
 
 if __name__ == "__main__":
-    overlap("./res/input/lane_1", "./res/input/lane_2")
+    perspective("./res/input/prepared_lane_1")
+    # overlap("./res/input/lane_1", "./res/input/lane_2")
     # lane_1, lane_2 = prepare_data(2)
     #
     # overlap_transversal()
